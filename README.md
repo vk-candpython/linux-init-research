@@ -1,4 +1,4 @@
-# 🐧 Linux Init Process: Complete Technical Dissertation
+# 🐧 linux-init-research
 
 
 <div align="center">
