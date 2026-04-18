@@ -16,10 +16,8 @@
 [![Research](https://img.shields.io/badge/type-Technical%20Research-orange)]()
 
 **Author:** Vladislav Khudash (17)  
-**Location:** Ukraine  
 **Date:** 02.04.2026  
 **Project:** LINUX-INIT-RESEARCH  
-**Platform:** LINUX
 
 </div>
 
