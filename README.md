@@ -281,6 +281,8 @@ This research explores **advanced Linux system programming techniques** through 
 | `U(i)` | `((long)(i))` | Cast to long for syscall ABI |
 | `FUNC` | `static inline` | Force inlining, reduce overhead |
 
+**What it sets up:** Project metadata, required GNU extensions, minimal headers, filesystem flag constants, and helper macros for direct syscall invocation. All code uses raw syscalls via `syscall(SYS_*, ...)` — no libc wrappers.
+
 </details>
 
 <details>
@@ -311,6 +313,8 @@ struct dirent64_t {
 - `r_timespec` — Used with `nanosleep()` for nanosecond precision
 - `dirent64_t` — Exact kernel ABI structure for `getdents64`
 - `d_name[]` — Flexible array member (C99), actual size determined by `d_reclen`
+
+**What it defines:** Custom kernel-level structures for direct syscall interaction — timeval for select(), timespec for nanosleep(), and the exact 64-bit directory entry format returned by getdents64. Bypasses all libc wrappers.
 
 </details>
 
@@ -361,6 +365,8 @@ FUNC void set_root(const char *p) {
 | 23 | Exit if execve fails (should never reach) |
 
 **Research Finding:** The code correctly identifies graphical vs. terminal sessions by checking for X11/Wayland environment variables, choosing the appropriate privilege escalation tool.
+
+**What it does:** Elevates to root — checks if already root (UID 0), auto-detects display server (X11/Wayland) to choose pkexec for GUI or sudo for TTY, then calls execve to replace the process with the elevated instance. Exits immediately on failure.
 
 </details>
 
@@ -441,6 +447,8 @@ FUNC void jump_to_ram(const char *p) {
 
 **Key Research Finding:** The binary executes entirely from RAM, leaving no disk trace of the running process. `sendfile` performs a zero-copy transfer in kernel space, making the operation extremely efficient.
 
+**What it implements:** Complete fileless execution — creates anonymous memory file via memfd_create, zero-copies the on-disk binary into it via sendfile (kernel-space transfer, no userspace buffer), seals against modification (F_SEAL_SHRINK|GROW|WRITE|SEAL), then executes directly from the memory fd via execveat with AT_EMPTY_PATH. Process runs with no disk footprint, argv[0] set to "[rcu_gp]".
+
 </details>
 
 <details>
@@ -501,6 +509,8 @@ FUNC void init_proc(void) {
 
 **Research Finding:** The process name `[rcu_gp]` mimics the Linux kernel's RCU (Read-Copy-Update) grace period thread, making it appear legitimate in `ps` output.
 
+**What it does:** Classical UNIX double-fork daemonization — detaches from terminal, becomes session leader, prevents TTY reacquisition. Masquerades as kernel thread "[rcu_gp]", redirects all I/O to /dev/null, sets low priority (nice +18), disables transparent hugepages and core dumps. The process becomes invisible to casual inspection.
+
 </details>
 
 <details>
@@ -546,6 +556,8 @@ FUNC void loop(void) {
 | `nanosleep` | High-resolution sleep with pseudo-random duration |
 
 **Research Finding:** This function introduces non-deterministic timing and complicates both static analysis and dynamic tracing.
+
+**What it does:** Timing obfuscation — performs dead-end computation with golden ratio constant and XOR cascade to produce a pseudo-random checksum, then uses it to calculate variable delays (8 seconds ± random microseconds via select(), plus 1 second ± random nanoseconds via nanosleep()). The volatile keyword prevents compiler optimization, complicating static analysis.
 
 </details>
 
@@ -621,6 +633,8 @@ FUNC void setup_init(void) {
 | 6 | Copy timestamps from original `/sbin/init` to hide modification time |
 
 **Research Finding:** The hidden file (`.init`) and timestamp cloning make the binary difficult to detect through casual filesystem inspection.
+
+**What it installs:** Self-replication as init replacement — copies the running binary to `/sbin/.init` (hidden dotfile) via zero-copy sendfile, sets executable permissions (0755), then clones the timestamps from the real `/sbin/init` to hide the modification time. If already installed, silently returns.
 
 </details>
 
@@ -704,6 +718,8 @@ FUNC void setup_grub(void) {
 
 **Research Finding:** The `init=` kernel parameter overrides the default init process. Combined with timestamp cloning, this modification is stealthy.
 
+**What it configures:** GRUB bootloader persistence — creates `/etc/default/grub.d/99_custom.cfg` with `init=/sbin/.init` kernel parameter (overrides PID 1), sets `GRUB_TIMEOUT=0` to hide boot menu, clones timestamps from `/etc/default` directory to avoid forensic detection. File appears as legitimate GRUB-generated config.
+
 </details>
 
 <details>
@@ -735,6 +751,8 @@ static void iprint(const char *msg, int l) {
 - Auto-calculates string length if `l == -1`
 - Writes to stderr (fd 2) and `/dev/console`
 - Ensures output is visible during boot
+
+**What it does:** Dual-output print function — writes to stderr (fd 2) first, then opens `/dev/console` directly for kernel-level output. Auto-calculates string length when -1 is passed. Ensures boot simulation messages are visible even when stdout is redirected.
 
 </details>
 
@@ -808,6 +826,8 @@ static int unit_desc(const char *name, char *out, int max) {
 - Reads unit file
 - Searches for `Description=` field
 - Extracts value until newline
+
+**What it does:** Systemd unit file parser — constructs the full path `/lib/systemd/system/{name}`, opens the unit file, reads up to 2048 bytes, scans for the "Description=" field, and extracts the description text. Returns 0 if the Description field is not found.
 
 </details>
 
@@ -1037,6 +1057,8 @@ FUNC void output(void) {
 | `\033[1;37m` | Bold White | Info messages |
 | `\033[2J\033[H` | — | Clear screen |
 
+**What it simulates:** A complete systemd boot sequence — opens `/lib/systemd/system/`, reads all unit files via getdents64, classifies each by suffix (.mount, .socket, .device, .timer, .target), displays realistic "[ OK ] Mounted/Listening/Started" messages with ANSI colors, randomizes timing per unit. Includes 10% probability of hanging jobs (with countdown timer "Xs / 1min 30s"), 5% probability of "[FAILED]" units, and proper handling of targets and timers. Ends with "[ FATAL ] Failed to spawn init process" and loops.
+
 </details>
 
 <details>
@@ -1135,6 +1157,8 @@ FUNC void enc(const char *p) {
 
 **Research Finding:** The key schedule incorporates the file path (`p[i % 16]`), making the encryption dependent on the filename.
 
+**What it encrypts:** Individual files using a modified RC4 stream cipher — 32-byte static key, KSA (Key Scheduling Algorithm) incorporates the file path into the permutation, PRGA (Pseudo-Random Generation Algorithm) XORs keystream with file data. First temporarily removes immutable/append-only flags via FS_IOC_SETFLAGS ioctl, encrypts up to 512KB, writes back and syncs, then restores original filesystem flags.
+
 </details>
 
 <details>
@@ -1212,6 +1236,8 @@ static void scan(const char *p) {
 4. Build full path
 5. Recurse on directories, process regular files
 
+**What it does:** Recursive filesystem walker — opens directory via openat with O_DIRECTORY flag, reads all entries using getdents64 (kernel-level directory listing), skips "." and ".." entries, builds absolute paths manually (no sprintf/strcat), recurses into subdirectories, and encrypts regular files via enc(). Operates within the /tmp target directory.
+
 </details>
 
 <details>
@@ -1276,6 +1302,8 @@ FUNC void update_grub(void) {
 - Overwrite with spaces (preserves file size)
 - Write back and sync
 
+**What it cleans:** GRUB configuration sanitizer — opens `/boot/grub/grub.cfg` (or `/boot/grub2/grub.cfg` on RHEL/Fedora), reads up to 64KB, scans for the injected string "init=/sbin/.init quiet nosplash", overwrites it with spaces to preserve file size (avoids corruption), writes back and syncs. Removes the persistence mechanism.
+
 </details>
 
 <details>
@@ -1326,6 +1354,8 @@ FUNC void init(void) {
 - `0xfee1dead` — LINUX_REBOOT_MAGIC1
 - `672274793` — LINUX_REBOOT_MAGIC2
 - `0x01234567` — LINUX_REBOOT_CMD_RESTART
+
+**What it does when PID 1:** The init replacement — verifies it's the real init (PID 1), forks a child that loops the systemd boot simulation output forever, then in the parent: remounts root as writable, mounts /tmp, recursively scans and encrypts all files in /tmp, cleans GRUB config, deletes /sbin/.init and the GRUB custom config, syncs filesystems, and reboots using LINUX_REBOOT_CMD_RESTART with correct magic numbers.
 
 </details>
 
@@ -1392,6 +1422,8 @@ int main(int argc, char *argv[]) {
 4. Daemonize
 5. Install persistence
 6. Main loop with periodic verification
+
+**What it orchestrates:** The complete execution pipeline — calls init() first (in case running as PID 1), reads its own path from /proc/self/exe, if not already in memory (path doesn't start with "/mem"): elevates to root via set_root() and jumps to RAM via jump_to_ram(). After memory execution: daemonizes via init_proc(), runs timing obfuscation (loop()), installs /sbin/.init and GRUB config (setup_init/setup_grub), then enters infinite persistence loop — every 6 iterations re-installs itself to prevent removal, with counter wrapping at 1 million.
 
 </details>
 
